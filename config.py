@@ -384,6 +384,11 @@ def generate_vline(width, height=1, label=""):
 def generate_text(width, height=1, label=""):
     return label
 
+def generate_image(width, height=1, label=""):
+    actual_width = max(width, 1)
+    actual_height = max(height, 1)
+    return "\n".join([" " * actual_width for _ in range(actual_height)])
+
 os.makedirs("configs", exist_ok=True)
 
 PARTS_LIBRARY = {
@@ -392,5 +397,6 @@ PARTS_LIBRARY = {
     "Button": {"generator": generate_button, "default_w": 15, "default_h": 1, "default_label": {"JP": "ボタン", "EN": "BTN"}, "z_index": 2},
     "Line": {"generator": generate_line, "default_w": 20, "default_h": 1, "default_label": {"JP": "", "EN": ""}, "z_index": 1},
     "V-Line": {"generator": generate_vline, "default_w": 1, "default_h": 5, "default_label": {"JP": "", "EN": ""}, "z_index": 1},
-    "Text": {"generator": generate_text, "default_w": 10, "default_h": 1, "default_label": {"JP": "テキスト", "EN": "Text"}, "z_index": 3}
+    "Text": {"generator": generate_text, "default_w": 10, "default_h": 1, "default_label": {"JP": "テキスト", "EN": "Text"}, "z_index": 3},
+    "Image": {"generator": generate_image, "default_w": 20, "default_h": 10, "default_label": {"JP": "画像", "EN": "Image"}, "z_index": 0}
 }

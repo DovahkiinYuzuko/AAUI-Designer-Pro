@@ -30,7 +30,7 @@ class StateManager:
     def init_layers(self):
         t = config.UI_TEXT.get(self.app.current_lang, config.UI_TEXT["JP"])
         self.layers = [
-            {"id": "L_DEFAULT", "name": "Layer 1", "locked": False, "visible": True, "opacity": 1.0, "image_data": None, "image_x": 0, "image_y": 0, "image_scale": 1.0}
+            {"id": "L_DEFAULT", "name": "Layer 1", "locked": False, "visible": True, "opacity": 1.0}
         ]
         self.active_layer_id = "L_DEFAULT"
 
@@ -51,15 +51,14 @@ class StateManager:
         for p_id, d in self.parts_data.items():
             state_d = d.copy()
             state_d.pop("canvas_items", None)
+            if "image_obj" in state_d:
+                state_d.pop("image_obj", None)
             state_d["id"] = p_id
             state_parts.append(state_d)
             
         state_layers = []
         for lyr in self.layers:
-            safe_lyr = lyr.copy()
-            if "image_data" in safe_lyr:
-                safe_lyr["image_data"] = "IMAGE_EXISTS" if safe_lyr["image_data"] else None
-            state_layers.append(safe_lyr)
+            state_layers.append(lyr.copy())
 
         state = {
             "layers": state_layers,
@@ -85,23 +84,8 @@ class StateManager:
         self.app.canvas_mgr.deselect_all()
         
         data_dict = json.loads(state_str)
-        t = config.UI_TEXT.get(self.app.current_lang, config.UI_TEXT["JP"])
         
-        current_images = {lyr["id"]: lyr.get("image_data") for lyr in self.layers}
-        
-        self.layers = data_dict.get("layers", [{"id": "L_DEFAULT", "name": "Layer 1", "locked": False, "visible": True, "opacity": 1.0, "image_scale": 1.0}])
-        for lyr in self.layers:
-            if lyr["id"] in current_images:
-                lyr["image_data"] = current_images[lyr["id"]]
-            else:
-                lyr["image_data"] = None
-                
-            if "image_scale" not in lyr:
-                lyr["image_scale"] = 1.0
-            if "image_x" not in lyr:
-                lyr["image_x"] = 0
-            if "image_y" not in lyr:
-                lyr["image_y"] = 0
+        self.layers = data_dict.get("layers", [{"id": "L_DEFAULT", "name": "Layer 1", "locked": False, "visible": True, "opacity": 1.0}])
         
         self.bg_color = data_dict.get("bg_color", "#1e1e1e")
         self.app.ui.canvas.configure(bg=self.bg_color)
@@ -120,14 +104,14 @@ class StateManager:
                 "group_id": data.get("group_id", None),
                 "locked": data.get("locked", False),
                 "canvas_items": [],
-                "z_order": data.get("z_order", 0)
+                "z_order": data.get("z_order", 0),
+                "image_path": data.get("image_path", None)
             }
             self.app.canvas_mgr.redraw_part(p_id, update_preview=False)
         
         self.app.canvas_mgr.apply_z_order()
         self.app.ui.update_layer_ui()
         self.app.canvas_mgr.apply_layer_visibility()
-        self.app.canvas_mgr.update_guide_display()
         
         self._is_restoring = False
         
@@ -180,7 +164,8 @@ class StateManager:
                 "group_id": new_group_id,
                 "locked": data.get("locked", False),
                 "canvas_items": [],
-                "z_order": data.get("z_order", 0)
+                "z_order": data.get("z_order", 0),
+                "image_path": data.get("image_path", None)
             }
             self.app.canvas_mgr.redraw_part(new_p_id, update_preview=False)
             self.app.canvas_mgr.select_item(new_p_id, add_to_selection=True)

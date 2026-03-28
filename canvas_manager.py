@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
 import uuid
+import os
 import customtkinter as ctk
 import config
 
@@ -15,13 +16,9 @@ class CanvasManager:
     def __init__(self, app):
         self.app = app
         self.drag_data = {"x": 0, "y": 0, "mode": None, "item": None, "corner": None, "group_offsets": {}}
-        self.guide_drag_data = {"x": 0, "y": 0, "layer_id": None, "start_scale": 1.0}
-        self.layer_image_ids = {}
-        self.layer_image_refs = {}
         
         self.marquee_id = None
         self.resize_handle_ids = []
-        self.selected_guide_id = None
         self.is_editing_inline = False
         self.inline_window_id = None
         self.inline_entry = None
@@ -116,7 +113,6 @@ class CanvasManager:
 
     def redraw_all(self, update_preview=True):
         self.draw_rulers_and_grid()
-        self.update_guide_display()
         for p_id in list(self.app.app_state.parts_data.keys()):
             self.redraw_part(p_id, update_preview=False)
         self.apply_z_order()
@@ -148,20 +144,7 @@ class CanvasManager:
         self.deselect_all()
         self.update_realtime_preview()
 
-    def clear_layer_images(self):
-        for img_id in self.layer_image_ids.values():
-            self.app.ui.canvas.delete(img_id)
-        self.layer_image_ids.clear()
-        self.layer_image_refs.clear()
-
     def apply_layer_visibility(self):
-        for lyr in self.app.app_state.layers:
-            l_id = lyr["id"]
-            img_id = self.layer_image_ids.get(l_id)
-            if img_id:
-                state = "normal" if (lyr.get("visible", True) and self.app.show_guide_flag) else "hidden"
-                self.app.ui.canvas.itemconfig(img_id, state=state)
-
         for p_id, data in self.app.app_state.parts_data.items():
             l_id = data.get("layer_id")
             lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
@@ -169,53 +152,7 @@ class CanvasManager:
             state = "normal" if is_vis else "hidden"
             for item in data.get("canvas_items", []):
                 self.app.ui.canvas.itemconfig(item, state=state)
-        self.update_guide_display()
         self.update_realtime_preview()
-
-    def update_guide_display(self):
-        c = self.app.ui.canvas
-        c.delete("guide_selection")
-        
-        for lyr in self.app.app_state.layers:
-            raw_img = lyr.get("image_data")
-            l_id = lyr["id"]
-            
-            if not raw_img or raw_img == "IMAGE_EXISTS":
-                if l_id in self.layer_image_ids:
-                    c.delete(self.layer_image_ids[l_id])
-                    del self.layer_image_ids[l_id]
-                continue
-
-            img_scale = lyr.get("image_scale", 1.0)
-            scaled_w = max(1, int(raw_img.width * self.scale * img_scale))
-            scaled_h = max(1, int(raw_img.height * self.scale * img_scale))
-            
-            img_rgba = raw_img.copy().convert("RGBA")
-            img_rgba = img_rgba.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
-            alpha = int(self.app.ui.opacity_slider.get() * 255 / 100)
-            img_rgba.putalpha(alpha)
-            self.layer_image_refs[l_id] = ImageTk.PhotoImage(img_rgba)
-            
-            if l_id in self.layer_image_ids:
-                c.delete(self.layer_image_ids[l_id])
-                
-            img_x = lyr.get("image_x", 0) * self.scale
-            img_y = lyr.get("image_y", 0) * self.scale
-            self.layer_image_ids[l_id] = c.create_image(img_x, img_y, anchor="nw", image=self.layer_image_refs[l_id])
-            
-            is_vis = lyr.get("visible", True)
-            state = "normal" if (is_vis and self.app.show_guide_flag) else "hidden"
-            c.itemconfig(self.layer_image_ids[l_id], state=state)
-            
-            if l_id == self.selected_guide_id and state == "normal" and not lyr.get("locked"):
-                c.create_rectangle(img_x, img_y, img_x + scaled_w, img_y + scaled_h, outline="#3498db", width=2, dash=(4, 4), tags="guide_selection")
-                s = 6
-                c.create_rectangle(img_x-s, img_y-s, img_x+s, img_y+s, fill="#3498db", outline="white", tags=("guide_resize_handle", "guide_selection"))
-                c.create_rectangle(img_x+scaled_w-s, img_y-s, img_x+scaled_w+s, img_y+s, fill="#3498db", outline="white", tags=("guide_resize_handle", "guide_selection"))
-                c.create_rectangle(img_x-s, img_y+scaled_h-s, img_x+s, img_y+scaled_h+s, fill="#3498db", outline="white", tags=("guide_resize_handle", "guide_selection"))
-                c.create_rectangle(img_x+scaled_w-s, img_y+scaled_h-s, img_x+scaled_w+s, img_y+scaled_h+s, fill="#3498db", outline="white", tags=("guide_resize_handle", "guide_selection"))
-            
-        self.apply_z_order()
 
     def draw_rulers_and_grid(self):
         self.app.ui.top_ruler.delete("all")
@@ -246,16 +183,14 @@ class CanvasManager:
         self.app.ui.canvas.tag_lower("grid")
         for lyr in self.app.app_state.layers:
             l_id = lyr["id"]
-            if l_id in self.layer_image_ids:
-                self.app.ui.canvas.tag_raise(self.layer_image_ids[l_id])
-                
-            if l_id == self.selected_guide_id:
-                self.app.ui.canvas.tag_raise("guide_selection")
-                
             p_ids = [p_id for p_id, d in self.app.app_state.parts_data.items() if d.get("layer_id") == l_id]
             p_ids.sort(key=lambda p_id: self.app.app_state.parts_data[p_id].get("z_order", 0))
             for p_id in p_ids:
-                self.app.ui.canvas.tag_raise(p_id)
+                for item in self.app.app_state.parts_data[p_id].get("canvas_items", []):
+                    self.app.ui.canvas.tag_raise(item)
+
+        for hid in self.resize_handle_ids:
+            self.app.ui.canvas.tag_raise(hid)
 
     def redraw_part(self, p_id, update_preview=True):
         if p_id not in self.app.app_state.parts_data: return
@@ -277,33 +212,64 @@ class CanvasManager:
         lyr = next((l for l in self.app.app_state.layers if l["id"] == data.get("layer_id")), None)
         opacity = lyr.get("opacity", 1.0) if lyr else 1.0
         
-        stipple_val = ""
-        if opacity < 0.25:
-            stipple_val = "gray12"
-        elif opacity < 0.5:
-            stipple_val = "gray25"
-        elif opacity < 0.75:
-            stipple_val = "gray50"
-        elif opacity < 0.95:
-            stipple_val = "gray75"
-        
         is_selected = p_id in self.app.app_state.selected_items
-        fill_color = "#2b2b2b" if data["type"] != "Text" else ""
-        outline_color = "#00FF00" if is_selected else data.get("color", "#FFFFFF")
-        line_width = max(1, int(2 * self.scale)) if is_selected else max(1, int(1 * self.scale))
-        
         dash_pattern = (4, 4) if data.get("locked", False) else ()
-        
-        rect_id = c.create_rectangle(x1, y1, x2, y2, fill=fill_color, outline=outline_color, width=line_width, stipple=stipple_val, dash=dash_pattern, tags=("draggable", "part", p_id))
-        
-        display_text = f"{data['type']}: {data['label']}" if data['label'] else data['type']
-        if data["type"] == "Text":
-            display_text = data["label"]
+
+        if data["type"] == "Image":
+            image_path = data.get("image_path")
+            if image_path and os.path.exists(image_path):
+                try:
+                    raw_img = Image.open(image_path).convert("RGBA")
+                    scaled_w = max(1, int(data["width"] * gw))
+                    scaled_h = max(1, int(data["height"] * gh))
+                    resized_img = raw_img.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+                    
+                    if opacity < 1.0:
+                        alpha = resized_img.getchannel('A')
+                        alpha = alpha.point(lambda i: int(i * opacity))
+                        resized_img.putalpha(alpha)
+                        
+                    photo = ImageTk.PhotoImage(resized_img)
+                    data["image_obj"] = photo
+                    
+                    item_id = c.create_image(x1, y1, anchor="nw", image=photo, tags=("draggable", "part", p_id))
+                    self.app.app_state.parts_data[p_id]["canvas_items"] = [item_id]
+                    
+                    if is_selected:
+                        sel_outline = c.create_rectangle(x1, y1, x2, y2, fill="", outline="#00FF00", width=max(1, int(2*self.scale)), dash=dash_pattern, tags=("draggable", "part", p_id))
+                        self.app.app_state.parts_data[p_id]["canvas_items"].append(sel_outline)
+                        
+                except Exception as e:
+                    print(f"Failed to load image: {e}")
+            else:
+                rect_id = c.create_rectangle(x1, y1, x2, y2, fill="#333", outline="red", dash=(4,4), tags=("draggable", "part", p_id))
+                text_id = c.create_text((x1+x2)/2, (y1+y2)/2, text="Image Not Found", fill="red", tags=("draggable", "part", p_id))
+                self.app.app_state.parts_data[p_id]["canvas_items"] = [rect_id, text_id]
+        else:
+            stipple_val = ""
+            if opacity < 0.25:
+                stipple_val = "gray12"
+            elif opacity < 0.5:
+                stipple_val = "gray25"
+            elif opacity < 0.75:
+                stipple_val = "gray50"
+            elif opacity < 0.95:
+                stipple_val = "gray75"
             
-        font_size = max(6, int(10 * self.scale))
-        text_id = c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=display_text, fill=outline_color, font=("Arial", font_size, "bold"), tags=("draggable", "part", p_id))
-        
-        self.app.app_state.parts_data[p_id]["canvas_items"] = [rect_id, text_id]
+            fill_color = "#2b2b2b" if data["type"] != "Text" else ""
+            outline_color = "#00FF00" if is_selected else data.get("color", "#FFFFFF")
+            line_width = max(1, int(2 * self.scale)) if is_selected else max(1, int(1 * self.scale))
+            
+            rect_id = c.create_rectangle(x1, y1, x2, y2, fill=fill_color, outline=outline_color, width=line_width, stipple=stipple_val, dash=dash_pattern, tags=("draggable", "part", p_id))
+            
+            display_text = f"{data['type']}: {data['label']}" if data['label'] else data['type']
+            if data["type"] == "Text":
+                display_text = data["label"]
+                
+            font_size = max(6, int(10 * self.scale))
+            text_id = c.create_text((x1 + x2) / 2, (y1 + y2) / 2, text=display_text, fill=outline_color, font=("Arial", font_size, "bold"), stipple=stipple_val, tags=("draggable", "part", p_id))
+            
+            self.app.app_state.parts_data[p_id]["canvas_items"] = [rect_id, text_id]
         
         if is_selected and len(self.app.app_state.selected_items) == 1 and not data.get("locked", False):
             self._draw_resize_handles(x1, y1, x2, y2)
@@ -446,15 +412,37 @@ class CanvasManager:
             except ValueError:
                 bg_rgb = (30, 30, 30)
             img = Image.new("RGB", (img_width, img_height), bg_rgb)
-            
-        draw = ImageDraw.Draw(img)
 
-        color_map = {}
         def get_sort_key(item):
             data = item[1]
             layer_idx = next((i for i, lyr in enumerate(self.app.app_state.layers) if lyr["id"] == data.get("layer_id")), 0)
             z_idx = data.get("z_order", 0)
             return (layer_idx, z_idx)
+
+        for p_id, data in sorted(self.app.app_state.parts_data.items(), key=get_sort_key):
+            lyr = next((l for l in self.app.app_state.layers if l["id"] == data.get("layer_id")), None)
+            if not lyr or not lyr.get("visible", True):
+                continue
+            if data["type"] == "Image" and data.get("image_path"):
+                try:
+                    img_part = Image.open(data["image_path"]).convert("RGBA")
+                    scaled_w = int(data["width"] * char_w_adj)
+                    scaled_h = int(data["height"] * line_spacing)
+                    if scaled_w > 0 and scaled_h > 0:
+                        img_part = img_part.resize((scaled_w, scaled_h), Image.Resampling.LANCZOS)
+                        lyr_opacity = lyr.get("opacity", 1.0)
+                        if lyr_opacity < 1.0:
+                            alpha = img_part.getchannel('A')
+                            alpha = alpha.point(lambda i: int(i * lyr_opacity))
+                            img_part.putalpha(alpha)
+                        px = int(data["col"] * char_w_adj) + 10 * scale_factor
+                        py = int(data["row"] * line_spacing) + 10 * scale_factor
+                        img.paste(img_part, (px, py), img_part)
+                except Exception as e:
+                    print(f"Export image error: {e}")
+            
+        draw = ImageDraw.Draw(img)
+        color_map = {}
 
         for p_id, data in sorted(self.app.app_state.parts_data.items(), key=get_sort_key):
             lyr = next((l for l in self.app.app_state.layers if l["id"] == data.get("layer_id")), None)
@@ -502,7 +490,42 @@ class CanvasManager:
             return None
         self.commit_inline_edit()
         p_def = config.PARTS_LIBRARY[part_name]
-        w, h = p_def["default_w"], p_def["default_h"]
+        
+        image_path = None
+        if part_name == "Image":
+            file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")])
+            if not file_path: return None
+            
+            # 🚨 engine.py を使った輪郭抽出の確認ダイアログ 🚨
+            msg = "輪郭を抽出してトレス用の線画にしますか？\n\n[Yes] 輪郭抽出\n[No] そのまま読み込む" if self.app.current_lang == "JP" else "Extract outlines for tracing?\n\n[Yes] Extract Outlines\n[No] Load as is"
+            ans = messagebox.askyesnocancel("Image Load", msg)
+            if ans is None: return None # キャンセル時は中止
+            
+            if ans:
+                import engine
+                try:
+                    processed_img = engine.create_guide_image(file_path)
+                    # configsフォルダ内に一時保存
+                    temp_dir = os.path.join(os.getcwd(), "configs")
+                    os.makedirs(temp_dir, exist_ok=True)
+                    temp_path = os.path.join(temp_dir, f"outline_{uuid.uuid4().hex[:8]}.png")
+                    processed_img.save(temp_path)
+                    image_path = temp_path
+                except Exception as e:
+                    messagebox.showerror("Error", f"輪郭抽出に失敗しました:\n{e}")
+                    return None
+            else:
+                image_path = file_path
+
+            try:
+                with Image.open(image_path) as tmp_img:
+                    w = max(1, int(tmp_img.width / config.GRID_WIDTH))
+                    h = max(1, int(tmp_img.height / config.GRID_HEIGHT))
+            except:
+                w, h = p_def["default_w"], p_def["default_h"]
+        else:
+            w, h = p_def["default_w"], p_def["default_h"]
+
         dl = p_def.get("default_label", "")
         label = label_override if label_override is not None else (dl.get(self.app.current_lang, "") if isinstance(dl, dict) else dl)
         
@@ -520,7 +543,8 @@ class CanvasManager:
             "row": int(y / config.GRID_HEIGHT),
             "width": w, "height": h, "label": label, "color": "#FFFFFF",
             "layer_id": self.app.app_state.active_layer_id, "group_id": None, "locked": False, "canvas_items": [],
-            "z_order": max_z + 1
+            "z_order": max_z + 1,
+            "image_path": image_path
         }
         self.redraw_part(p_id)
         self.select_item(p_id)
@@ -594,17 +618,6 @@ class CanvasManager:
         self.app.app_state.save_state()
         self.app.set_status("Part lock toggled.")
 
-    def clear_active_layer_image(self):
-        l_id = self.app.app_state.active_layer_id
-        lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
-        if lyr and lyr.get("image_data"):
-            if messagebox.askyesno("Confirm", f"レイヤー '{lyr['name']}' の下絵を消去しますか？"):
-                lyr["image_data"] = None
-                self.selected_guide_id = None
-                self.update_guide_display()
-                self.app.app_state.save_state()
-                self.app.set_status("Guide image cleared.")
-
     def show_context_menu(self, event):
         c = self.app.ui.canvas
         cx, cy = c.canvasx(event.x), c.canvasy(event.y)
@@ -640,28 +653,13 @@ class CanvasManager:
             menu.add_command(label=t.get("menu_send_backward", "Send Backward"), command=self.send_backward)
             menu.add_command(label=t.get("menu_send_back", "Send to Back"), command=self.send_to_back)
         else:
-            clicked_guide_layer_id = None
-            for l_id, img_id in self.layer_image_ids.items():
-                if img_id in items:
-                    lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
-                    if lyr and not lyr.get("locked"):
-                        clicked_guide_layer_id = l_id
-                        break
-            
-            if clicked_guide_layer_id:
-                self.app.set_active_layer(clicked_guide_layer_id)
-                self.selected_guide_id = clicked_guide_layer_id
-                self.update_guide_display()
-                menu.add_command(label=t.get("load_guide", "Load Guide Image..."), command=self.app.load_guide_image)
-                menu.add_command(label="下絵を消去" if self.app.current_lang == "JP" else "Clear Guide Image", command=self.clear_active_layer_image)
-            else:
-                if self.app.app_state.clipboard:
-                    menu.add_command(label=t.get("menu_paste", "Paste"), command=self.app.app_state.paste_action)
-                    menu.add_separator()
-                menu.add_command(label="View Reset (100%)", command=self.reset_view_full)
-                menu.add_command(label="Focus First Part", command=lambda: self.focus_part("first"))
+            if self.app.app_state.clipboard:
+                menu.add_command(label=t.get("menu_paste", "Paste"), command=self.app.app_state.paste_action)
                 menu.add_separator()
-                menu.add_command(label=t.get("menu_copy_llm", "LLM用AAコピー"), command=self.app.copy_for_llm)
+            menu.add_command(label="View Reset (100%)", command=self.reset_view_full)
+            menu.add_command(label="Focus First Part", command=lambda: self.focus_part("first"))
+            menu.add_separator()
+            menu.add_command(label=t.get("menu_copy_llm", "LLM用AAコピー"), command=self.app.copy_for_llm)
 
         menu.post(event.x_root, event.y_root)
 
@@ -711,10 +709,6 @@ class CanvasManager:
         self.app.ui.prop_entry_w.delete(0, tk.END)
         self.app.ui.prop_entry_h.delete(0, tk.END)
         self._clear_resize_handles()
-        
-        # ガイド画像の選択解除
-        self.selected_guide_id = None
-        self.app.ui.canvas.delete("guide_selection")
 
     def apply_properties(self):
         if len(self.app.app_state.selected_items) != 1: return
@@ -793,7 +787,8 @@ class CanvasManager:
                 "width": data["width"], "height": data["height"], "label": data["label"],
                 "color": data["color"], "layer_id": self.app.app_state.active_layer_id, 
                 "group_id": new_gid, "locked": False, "canvas_items": [],
-                "z_order": max_z
+                "z_order": max_z,
+                "image_path": data.get("image_path")
             }
             self.redraw_part(new_p_id)
             new_selected.add(new_p_id)
@@ -822,9 +817,13 @@ class CanvasManager:
         
         safe_items = []
         for p in self.app.app_state.selected_items:
+            part_data = self.app.app_state.parts_data.get(p)
             if p in self.app.app_state.parts_data:
-                is_layer_locked = self.app.is_layer_locked(self.app.app_state.parts_data[p].get("layer_id"))
+                # 🚨 パーツの親レイヤーがロックされているか厳密に判定 🚨
+                layer_id = self.app.app_state.parts_data[p].get("layer_id")
+                is_layer_locked = self.app.is_layer_locked(layer_id)
                 is_part_locked = self.app.app_state.parts_data[p].get("locked", False)
+                
                 if not is_layer_locked and not is_part_locked:
                     safe_items.append(p)
         
@@ -924,17 +923,7 @@ class CanvasManager:
             item = c.find_withtag("current")
             if item:
                 tags = c.gettags(item[0])
-                
-                # 画像用のリサイズハンドルの処理
-                if "guide_resize_handle" in tags:
-                    if self.selected_guide_id:
-                        lyr = next((l for l in self.app.app_state.layers if l["id"] == self.selected_guide_id), None)
-                        if lyr and not lyr.get("locked"):
-                            self.guide_drag_data.update({"x": cx, "y": cy, "layer_id": self.selected_guide_id, "start_scale": lyr.get("image_scale", 1.0)})
-                            self.drag_data["mode"] = "guide_resize"
-                            return
                             
-                # 既存のパーツリサイズハンドルの処理
                 if "resize_handle_nw" in tags:
                     self.drag_data.update({"mode": "resize", "corner": "nw", "item": list(self.app.app_state.selected_items)[0]})
                     return
@@ -957,27 +946,8 @@ class CanvasManager:
                         self._clear_resize_handles()
                         self.drag_data.update({"mode": "move", "x": cx, "y": cy})
                         return
-                        
-            # パーツがクリックされなかった場合は画像のクリック判定へ
-            for l_id, img_id in self.layer_image_ids.items():
-                if img_id in c.find_overlapping(cx-1, cy-1, cx+1, cy+1):
-                    lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
-                    if lyr and not lyr.get("locked"):
-                        self.deselect_all()
-                        self.selected_guide_id = l_id
-                        self.update_guide_display()
-                        
-                        if event.state & 0x0004:
-                            self.guide_drag_data.update({"x": cx, "y": cy, "layer_id": l_id, "start_scale": lyr.get("image_scale", 1.0)})
-                            self.drag_data["mode"] = "guide_resize"
-                        else:
-                            self.guide_drag_data.update({"x": cx, "y": cy, "layer_id": l_id})
-                            self.drag_data["mode"] = "guide_move"
-                        return
 
             self.deselect_all()
-            self.selected_guide_id = None
-            self.update_guide_display()
             self.drag_data["mode"] = None
 
         elif tool in ["Text", "テキスト"]:
@@ -1000,44 +970,6 @@ class CanvasManager:
     def on_drag(self, event):
         c = self.app.ui.canvas
         cx, cy = c.canvasx(event.x), c.canvasy(event.y)
-        
-        if self.drag_data.get("mode") == "guide_resize":
-            l_id = self.guide_drag_data.get("layer_id")
-            if not l_id or l_id not in self.layer_image_ids: return
-            
-            pixel_dx = cx - self.guide_drag_data["x"]
-            
-            lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
-            if not lyr: return
-            
-            start_scale = self.guide_drag_data.get("start_scale", 1.0)
-            new_scale = max(0.1, start_scale + (pixel_dx * 0.005 / self.scale))
-            lyr["image_scale"] = new_scale
-            
-            self.update_guide_display()
-            return
-            
-        if self.drag_data.get("mode") == "guide_move":
-            l_id = self.guide_drag_data.get("layer_id")
-            if not l_id or l_id not in self.layer_image_ids: return
-            
-            pixel_dx = cx - self.guide_drag_data["x"]
-            pixel_dy = cy - self.guide_drag_data["y"]
-            base_dx = pixel_dx / self.scale
-            base_dy = pixel_dy / self.scale
-            
-            lyr = next((l for l in self.app.app_state.layers if l["id"] == l_id), None)
-            if not lyr: return
-            
-            new_x = lyr.get("image_x", 0) + base_dx
-            new_y = lyr.get("image_y", 0) + base_dy
-            
-            lyr["image_x"] = new_x
-            lyr["image_y"] = new_y
-            
-            self.update_guide_display()
-            self.guide_drag_data.update({"x": cx, "y": cy})
-            return
 
         tool = self.app.ui.tool_var.get()
         if tool in ["Select", "選択モード"]:
@@ -1127,11 +1059,6 @@ class CanvasManager:
             c.coords(self.marquee_id, self.drag_data["start_x"], self.drag_data["start_y"], cx, cy)
 
     def on_release(self, event):
-        if self.drag_data.get("mode") in ["guide_move", "guide_resize"]:
-            self.drag_data["mode"] = None
-            self.app.app_state.save_state()
-            return
-            
         c = self.app.ui.canvas
         tool = self.app.ui.tool_var.get()
         gw = config.GRID_WIDTH * self.scale

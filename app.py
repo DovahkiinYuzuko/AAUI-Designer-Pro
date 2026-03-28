@@ -1,7 +1,6 @@
 """
 AAUI Designer Proのメインアプリケーション起動モジュール。
 各マネージャー（State, UI, Canvas, File）を初期化し、イベントのルーティングとメインループを統括する。
-V4.18: レイヤー名変更処理の集約と連携強化（呼び出しエラー修正済）。
 """
 
 import tkinter as tk
@@ -27,7 +26,6 @@ class AAUIDesignerApp(ctk.CTk):
         super().__init__()
         self.current_lang = "JP"
         self.show_grid_flag = True
-        self.show_guide_flag = True
         
         os.makedirs("configs", exist_ok=True)
         
@@ -315,26 +313,6 @@ class AAUIDesignerApp(ctk.CTk):
         except Exception:
             pass
 
-    def load_guide_image(self):
-        active_lyr = next((l for l in self.app_state.layers if l["id"] == self.app_state.active_layer_id), None)
-        if not active_lyr: return
-        if active_lyr.get("locked"):
-            messagebox.showwarning("Warning", "現在のアクティブレイヤーはロックされています。")
-            return
-
-        file_path = filedialog.askopenfilename(filetypes=[("Image Files", "*.png;*.jpg;*.jpeg;*.bmp")])
-        if not file_path: return
-        try:
-            import engine
-            img = engine.create_guide_image(file_path, target_width=1000)
-            active_lyr["image_data"] = img
-            active_lyr["image_x"] = 0
-            active_lyr["image_y"] = 0
-            self.canvas_mgr.update_guide_display()
-            self.set_status(f"Image loaded to layer '{active_lyr['name']}': {os.path.basename(file_path)}")
-        except Exception as e:
-            messagebox.showerror("Error", str(e))
-
     def _load_icons(self):
         try:
             if os.path.exists(config.ICON_LOCK_PATH):
@@ -353,11 +331,24 @@ class AAUIDesignerApp(ctk.CTk):
                 self.icon_invisible = ctk.CTkImage(light_image=Image.open(config.ICON_INVISIBLE_PATH), size=config.ICON_SIZE)
             else: self.icon_invisible = None
 
+            up_path = "assets/LayerUp.png"
+            dn_path = "assets/LayerDown.png"
+            
+            if os.path.exists(up_path):
+                self.icon_layer_up = ctk.CTkImage(light_image=Image.open(up_path), size=(16, 16))
+            else: self.icon_layer_up = None
+
+            if os.path.exists(dn_path):
+                self.icon_layer_dn = ctk.CTkImage(light_image=Image.open(dn_path), size=(16, 16))
+            else: self.icon_layer_dn = None
+
         except Exception:
             self.icon_lock = None
             self.icon_unlock = None
             self.icon_visible = None
             self.icon_invisible = None
+            self.icon_layer_up = None
+            self.icon_layer_dn = None
 
     def set_status(self, text):
         self.ui.status_label.configure(text=str(text or ""))
@@ -424,7 +415,6 @@ class AAUIDesignerApp(ctk.CTk):
         
         self.view_menu = tk.Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label=str(t.get("menu_view", "View")), menu=self.view_menu)
-        self.view_menu.add_command(label=str(t.get("menu_toggle_guide", "Toggle Background Image")), command=self.toggle_guide)
         self.view_menu.add_command(label=str(t.get("menu_toggle_grid", "Toggle Grid")), command=self.toggle_grid)
         self.view_menu.add_command(label=str(t.get("menu_bg_color", "Change Background Color...")), command=self.change_bg_color)
         
@@ -440,10 +430,6 @@ class AAUIDesignerApp(ctk.CTk):
         for path in self.file_mgr.recent_files:
             if os.path.exists(path):
                 self.recent_menu.add_command(label=os.path.basename(path), command=lambda p=path: self.file_mgr.load_project(p))
-
-    def toggle_guide(self):
-        self.show_guide_flag = not self.show_guide_flag
-        self.canvas_mgr.apply_layer_visibility()
 
     def toggle_grid(self):
         self.show_grid_flag = not self.show_grid_flag
@@ -463,7 +449,6 @@ class AAUIDesignerApp(ctk.CTk):
         self.canvas_mgr.clear_all_parts()
         self.app_state.current_project_path = None
         self.app_state.init_layers()
-        self.canvas_mgr.clear_layer_images()
         self.app_state.history.clear()
         self.app_state.history_index = -1
         self.ui.update_layer_ui()
@@ -506,7 +491,7 @@ class AAUIDesignerApp(ctk.CTk):
         import uuid
         new_id = "L_" + str(uuid.uuid4())[:8]
         new_name = f"Layer {len(self.app_state.layers) + 1}"
-        self.app_state.layers.append({"id": new_id, "name": new_name, "locked": False, "visible": True, "opacity": 1.0, "image_data": None})
+        self.app_state.layers.append({"id": new_id, "name": new_name, "locked": False, "visible": True, "opacity": 1.0})
         self.app_state.active_layer_id = new_id
         self.canvas_mgr.apply_z_order()
         self.ui.update_layer_ui()
@@ -518,19 +503,18 @@ class AAUIDesignerApp(ctk.CTk):
             return
         idx = next((i for i, lyr in enumerate(self.app_state.layers) if lyr["id"] == self.app_state.active_layer_id), None)
         if idx is not None:
-            del_id = self.app_state.layers[idx]["id"]
-            if del_id in self.canvas_mgr.layer_image_ids:
-                messagebox.showwarning("Warning", "現在のアクティブレイヤーはロックされています。")
+            # 🚨 レイヤー削除前のロック確認を追加 🚨
+            if self.app_state.layers[idx].get("locked", False):
+                msg = "ロックされているレイヤーは削除できません。" if self.current_lang == "JP" else "Cannot delete locked layer."
+                messagebox.showwarning("Warning", str(msg))
                 return
+                
+            del_id = self.app_state.layers[idx]["id"]
 
             for p_id, data in list(self.app_state.parts_data.items()):
                 if data.get("layer_id") == del_id:
                     self.ui.canvas.delete(p_id)
                     del self.app_state.parts_data[p_id]
-            
-            if self.canvas_mgr.layer_image_ids.get(del_id):
-                self.ui.canvas.delete(self.canvas_mgr.layer_image_ids[del_id])
-                del self.canvas_mgr.layer_image_ids[del_id]
                 
             del self.app_state.layers[idx]
             self.app_state.active_layer_id = self.app_state.layers[-1]["id"]
@@ -562,10 +546,6 @@ class AAUIDesignerApp(ctk.CTk):
         for p_id, data in self.app_state.parts_data.items():
             if data.get("layer_id") == target_id:
                 data["layer_id"] = dest_id
-                
-        if self.canvas_mgr.layer_image_ids.get(target_id):
-            self.ui.canvas.delete(self.canvas_mgr.layer_image_ids[target_id])
-            del self.canvas_mgr.layer_image_ids[target_id]
             
         del self.app_state.layers[idx]
         self.app_state.active_layer_id = dest_id

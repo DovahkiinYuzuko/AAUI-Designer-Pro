@@ -127,18 +127,8 @@ class UIManager:
         self.font_dropdown = ctk.CTkComboBox(self.content_scroll, values=font_names, variable=self.font_var, command=self.on_font_change)
         self.font_dropdown.pack(fill="x", padx=10, pady=5)
         
-        self.btn_load_guide = ctk.CTkButton(self.content_scroll, text="Load Guide Image", command=lambda: self.app.load_guide_image())
-        self.btn_load_guide.pack(fill="x", padx=10, pady=5)
-        
         self.btn_edit_shortcuts = ctk.CTkButton(self.content_scroll, text="Edit Shortcuts...", command=self.app.open_shortcut_editor)
         self.btn_edit_shortcuts.pack(fill="x", padx=10, pady=5)
-
-        self.opacity_label = ctk.CTkLabel(self.content_scroll, text="Guide Opacity:", anchor="w")
-        self.opacity_label.pack(fill="x", padx=10)
-        
-        self.opacity_slider = ctk.CTkSlider(self.content_scroll, from_=0, to=100, command=lambda e: self.app.canvas_mgr.update_guide_display())
-        self.opacity_slider.set(70)
-        self.opacity_slider.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(self.content_scroll, text="Grid Size:", anchor="w").pack(fill="x", padx=10)
         grid_frame = ctk.CTkFrame(self.content_scroll, fg_color="transparent")
@@ -177,13 +167,6 @@ class UIManager:
         self.layer_opacity_slider = ctk.CTkSlider(self.layer_mgr_frame, from_=10, to=100, command=self.on_layer_opacity_change)
         self.layer_opacity_slider.set(100)
         self.layer_opacity_slider.pack(fill="x", padx=10, pady=(0, 5))
-
-        btn_frame1 = ctk.CTkFrame(self.layer_mgr_frame, fg_color="transparent")
-        btn_frame1.pack(fill="x", padx=5, pady=2)
-        self.btn_layer_up = ctk.CTkButton(btn_frame1, text="Up", width=60, command=lambda: self.app.layer_move_up())
-        self.btn_layer_up.pack(side="left", expand=True, padx=2)
-        self.btn_layer_dn = ctk.CTkButton(btn_frame1, text="Dn", width=60, command=lambda: self.app.layer_move_down())
-        self.btn_layer_dn.pack(side="left", expand=True, padx=2)
 
         btn_frame2 = ctk.CTkFrame(self.layer_mgr_frame, fg_color="transparent")
         btn_frame2.pack(fill="x", padx=5, pady=2)
@@ -397,6 +380,22 @@ class UIManager:
             
             lbl_name = ctk.CTkLabel(row_frame, text=lyr["name"], anchor="w", cursor="hand2")
             lbl_name.pack(side="left", fill="x", expand=True, padx=5)
+
+            if hasattr(self.app, 'icon_layer_dn') and self.app.icon_layer_dn:
+                btn_dn = ctk.CTkButton(row_frame, image=self.app.icon_layer_dn, text="", width=24, height=24, fg_color="transparent",
+                                       command=lambda l_id=lyr["id"]: (self.app.set_active_layer(l_id), self.app.layer_move_down()))
+            else:
+                btn_dn = ctk.CTkButton(row_frame, text="↓", width=24, height=24, fg_color="transparent",
+                                       command=lambda l_id=lyr["id"]: (self.app.set_active_layer(l_id), self.app.layer_move_down()))
+            btn_dn.pack(side="right", padx=1)
+
+            if hasattr(self.app, 'icon_layer_up') and self.app.icon_layer_up:
+                btn_up = ctk.CTkButton(row_frame, image=self.app.icon_layer_up, text="", width=24, height=24, fg_color="transparent",
+                                       command=lambda l_id=lyr["id"]: (self.app.set_active_layer(l_id), self.app.layer_move_up()))
+            else:
+                btn_up = ctk.CTkButton(row_frame, text="↑", width=24, height=24, fg_color="transparent",
+                                       command=lambda l_id=lyr["id"]: (self.app.set_active_layer(l_id), self.app.layer_move_up()))
+            btn_up.pack(side="right", padx=1)
             
             lbl_name.bind("<Button-1>", lambda e, l_id=lyr["id"]: self.app.set_active_layer(l_id))
             row_frame.bind("<Button-1>", lambda e, l_id=lyr["id"]: self.app.set_active_layer(l_id))
@@ -438,8 +437,6 @@ class UIManager:
         self.lbl_sys.configure(text=str(t.get("system", "SYSTEM")))
         self.lbl_layer_title.configure(text=str(t.get("layer_title", "LAYER MANAGER")))
 
-        self.btn_layer_up.configure(text=str(t.get("layer_up", "Up")))
-        self.btn_layer_dn.configure(text=str(t.get("layer_dn", "Dn")))
         self.btn_layer_merge.configure(text=str(t.get("layer_merge", "Merge Down")))
         self.btn_layer_rename.configure(text=str(t.get("layer_rename", "Rename")))
         
@@ -449,9 +446,7 @@ class UIManager:
         self.lbl_font_select.configure(text=str(t.get("font_select", "Export Font:")))
         
         self.lbl_rt_preview.configure(text=str(t.get("rt_preview_title", "REAL-TIME PREVIEW")))
-        self.opacity_label.configure(text=str(t.get("guide_opacity", "Guide Opacity:")))
         self.color_btn.configure(text=str(t.get("choose_color", "Choose Color")))
-        self.btn_load_guide.configure(text=str(t.get("load_guide", "Load Guide Image")))
         
         if self.app.current_lang == "JP":
             self.btn_lang_switch.configure(text="Switch to English")
